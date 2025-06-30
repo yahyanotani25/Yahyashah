@@ -1,0 +1,29 @@
+Flask==2.2.5
+flask‑tls==0.4.0
+dnslib==0.9.21
+cryptography==41.0.2
+python‑nmap==0.6.4
+paramiko==2.12.0
+impacket==0.11.0
+transformers==4.45.1
+torch==2.0.1
+shodan==1.27.0
+PyYAML==6.0
+azure‑identity==1.13.0
+azure‑mgmt‑resource==24.1.0
+azure‑storage‑blob==12.15.0
+google‑cloud‑storage==2.8.0
+boto3==1.28.0
+requests==2.31.0
+dnspython==2.4.2
+scapy==2.5.0
+evdev==1.6.1
+# plus any other modules like Flask‑SocketIO, psutil, etc.
+sounddevice==0.4.8
+soundfile==0.12.1
+opencv-python==4.7.0.72
+requests==2.31.0
+sounddevice==0.4.8
+soundfile==0.12.1
+pywin32==305    # for win32crypt on Windows
+pycryptodome==3.17.0

