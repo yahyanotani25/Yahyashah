@@ -7,9 +7,11 @@ import time
 import shutil
 from base64 import b64encode, b64decode
 from pathlib import Path
+import gzip
+from datetime import datetime
+import secrets
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from Crypto.Cipher import ChaCha20_Poly1305
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 from modules.config import load_config
 
 cfg = load_config().get("logging", {})
@@ -64,20 +66,20 @@ if ROTATE:
             if fn.exists() and not str(fn).endswith(".enc"):
                 try:
                     # Compress
-                    import gzip
                     gz_path = fn.with_suffix(fn.suffix + ".gz")
                     with open(fn, "rb") as f_in, gzip.open(str(gz_path), "wb") as f_out:
                         shutil.copyfileobj(f_in, f_out)
                     os.remove(fn)
 
-                    # Encrypt with ChaCha20_Poly1305
+                    # Encrypt with ChaCha20Poly1305
                     with open(str(gz_path), "rb") as f_plain:
                         plaintext = f_plain.read()
-                    cipher = ChaCha20_Poly1305.new(key=AES_KEY[:32])
-                    ciphertext, tag = cipher.encrypt_and_digest(plaintext)
+                    nonce = secrets.token_bytes(12)
+                    cipher = ChaCha20Poly1305(AES_KEY[:32])
+                    ciphertext = cipher.encrypt(nonce, plaintext, None)
                     enc_path = gz_path.with_suffix(".enc")
                     with open(str(enc_path), "wb") as f_enc:
-                        f_enc.write(cipher.nonce + tag + ciphertext)
+                        f_enc.write(nonce + ciphertext)
                     os.remove(str(gz_path))
                 except Exception:
                     pass
@@ -154,110 +156,34 @@ def log_event(category: str, message: bytes, level: str = "info"):
     # Python logger
     logfn = getattr(logger, level, logger.info)
     logfn(f"[{category}] {text}")
-# File: modules/logger.py
-
-"""
-Enhanced logger:
-• Every event is stored in encrypted SQLite via AES‑GCM; older backups encrypted via ChaCha20‑Poly1305.
-• Structured JSON logs written to rotating log file (in RAM disk or /tmp).
-• Optional remote syslog forwarding (TLS).
-• Uncaught exceptions automatically logged via a custom handler.
-"""
-
-import os
-import sqlite3
-import logging
-import logging.handlers
-import threading
-import time
-import gzip
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
-
-from datetime import datetime
-
-CFG = {
-    "log_db": os.getenv("LOG_DB_PATH", "/tmp/bismillah_events.db"),
-    "aes_key": bytes.fromhex(os.getenv("LOG_AES_KEY", "00"*32)),
-    "aes_iv": bytes.fromhex(os.getenv("LOG_AES_IV", "11"*12))[:12],
-    "chacha_key": bytes.fromhex(os.getenv("LOG_CHACHA_KEY", "22"*32)),
-    "retention_days": int(os.getenv("LOG_RETENTION_DAYS", "7")),
-    "ramdisk": os.getenv("LOG_RAMDISK", "/dev/shm"),
-    "remote_syslog": os.getenv("REMOTE_SYSLOG", ""),
-}
-
-# Initialize file logger
-log_path = os.path.join(CFG["ramdisk"], "bismillah.log")
-file_handler = logging.handlers.RotatingFileHandler(log_path, maxBytes=5*1024*1024, backupCount=3)
-file_formatter = logging.Formatter('{"timestamp":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","message":"%(message)s"}')
-file_handler.setFormatter(file_formatter)
-logger = logging.getLogger("bismillah")
-logger.setLevel(logging.INFO)
-logger.addHandler(file_handler)
-
-if CFG["remote_syslog"]:
-    syslog_handler = logging.handlers.SysLogHandler(address=(CFG["remote_syslog"], 6514), socktype=socket.SOCK_STREAM)  # TLS
-    logger.addHandler(syslog_handler)
-
-_db_lock = threading.Lock()
-
-def _init_db():
-    conn = sqlite3.connect(CFG["log_db"], check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY,
-            timestamp REAL,
-            category TEXT,
-            enc_data BLOB
-        )
-    """)
-    conn.commit()
-    return conn
-
-_db_conn = _init_db()
-
-def log_event(category: str, message: bytes, level: str = "INFO"):
-    """
-    Encrypt `message` with AES‑GCM and insert into SQLite.
-    Also write structured log to file logger.
-    """
-    try:
-        aesgcm = AESGCM(CFG["aes_key"])
-        ct = aesgcm.encrypt(CFG["aes_iv"], message, None)
-        with _db_lock:
-            _db_conn.execute("INSERT INTO events (timestamp, category, enc_data) VALUES (?, ?, ?)", (time.time(), category, ct))
-            _db_conn.commit()
-        # Also log plaintext (or careful subset) to rotating log file
-        logger.log(getattr(logging, level.upper(), logging.INFO), f"[{category}] {message.decode(errors='ignore')}")
-    except Exception as e:
-        logger.error(f"[LOGGER] Failed to log event: {e}")
 
 def _rotate_and_encrypt_backups():
     """
     Compress old DB files and encrypt with ChaCha20‑Poly1305.
     Runs daily.
     """
+    global _db_conn
     while True:
         time.sleep(86400)  # once a day
         # Close current DB
-        with _db_lock:
+        with _LOCK:
             _db_conn.close()
         # Backup and encrypt
         ts = datetime.utcnow().strftime("%Y%m%d")
-        backup_name = f"{CFG['log_db']}.{ts}.gz"
-        with open(CFG["log_db"], "rb") as f_in, gzip.open(backup_name, "wb") as f_out:
+        backup_name = f"{DB_PATH}.{ts}.gz"
+        with open(DB_PATH, "rb") as f_in, gzip.open(backup_name, "wb") as f_out:
             f_out.writelines(f_in)
-        chacha = ChaCha20Poly1305(CFG["chacha_key"])
+        nonce = secrets.token_bytes(12)
+        chacha = ChaCha20Poly1305(AES_KEY[:32])
         with open(backup_name, "rb") as f:
             pt = f.read()
-        ct = chacha.encrypt(b"\x00"*12, pt, None)
+        ct = chacha.encrypt(nonce, pt, None)
         with open(backup_name + ".enc", "wb") as f:
-            f.write(ct)
+            f.write(nonce + ct)
         os.remove(backup_name)
         # Reinit DB
-        with _db_lock:
-            global _db_conn
-            _db_conn = _init_db()
+        with _LOCK:
+            _db_conn = sqlite3.connect(DB_PATH)
 
 # Spawn backup thread
 threading.Thread(target=_rotate_and_encrypt_backups, daemon=True).start()

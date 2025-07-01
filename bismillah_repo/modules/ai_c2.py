@@ -13,8 +13,10 @@ import json
 import time
 import hashlib
 import logging
+import threading
 from threading import Lock
 from queue import PriorityQueue, Empty
+from pathlib import Path
 import requests
 
 # Optional: local HF model inference
@@ -73,12 +75,45 @@ def _call_local_llm(prompt: str) -> str:
         return out[0]["generated_text"].strip()
     return ""
 
+def start_config_watcher():
+    """Watch for configuration changes and reload config when needed"""
+    def config_watcher_loop():
+        config_file = Path(__file__).parent.parent / "config.json"
+        last_modified = 0
+        
+        while True:
+            try:
+                if config_file.exists():
+                    current_modified = config_file.stat().st_mtime
+                    if current_modified > last_modified:
+                        logger.info("[AI_C2] Configuration file changed, reloading...")
+                        # Reload config from file
+                        try:
+                            with open(config_file, 'r') as f:
+                                new_config = json.load(f)
+                            # Update CONFIG with new values
+                            if 'ai_c2' in new_config:
+                                CONFIG.update(new_config['ai_c2'])
+                            logger.info("[AI_C2] Configuration reloaded successfully")
+                        except Exception as e:
+                            logger.error(f"[AI_C2] Failed to reload config: {e}")
+                        last_modified = current_modified
+            except Exception as e:
+                logger.error(f"[AI_C2] Config watcher error: {e}")
+            
+            time.sleep(30)  # Check every 30 seconds
+    
+    # Start config watcher in background thread
+    watcher_thread = threading.Thread(target=config_watcher_loop, daemon=True)
+    watcher_thread.start()
+    logger.info("[AI_C2] Configuration watcher started")
+
 def ai_c2_loop():
     """
     1) Reads ai_tasks.json for new tasks.
     2) Skips tasks already seen (via SHA256 hash).
-    3) Assigns priority based on “critical” flag.
-    4) For new tasks, calls LLM (remote or local) to augment “action” → “llm_suggestion”.
+    3) Assigns priority based on "critical" flag.
+    4) For new tasks, calls LLM (remote or local) to augment "action" → "llm_suggestion".
     5) Enqueues into task_queue for core dispatcher to pick up.
     6) Polls every CONFIG['poll_interval'].
     """
@@ -106,7 +141,7 @@ def ai_c2_loop():
                 with open(seen_file, "w") as f:
                     json.dump(list(_seen_tasks), f)
 
-            # Determine priority (0=high if “critical”:True)
+            # Determine priority (0=high if "critical":True)
             prio = 0 if entry.get("critical") else 1
             prompt = f"Task: {entry}\nGenerate a secure shell command or script to perform this action."
             suggestion = ""

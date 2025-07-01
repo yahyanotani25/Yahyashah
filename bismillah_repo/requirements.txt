@@ -1,29 +1,60 @@
-Flask==2.2.5
-flask‑tls==0.4.0
-dnslib==0.9.21
-cryptography==41.0.2
-python‑nmap==0.6.4
-paramiko==2.12.0
-impacket==0.11.0
-transformers==4.45.1
-torch==2.0.1
-shodan==1.27.0
-PyYAML==6.0
-azure‑identity==1.13.0
-azure‑mgmt‑resource==24.1.0
-azure‑storage‑blob==12.15.0
-google‑cloud‑storage==2.8.0
-boto3==1.28.0
-requests==2.31.0
-dnspython==2.4.2
-scapy==2.5.0
-evdev==1.6.1
-# plus any other modules like Flask‑SocketIO, psutil, etc.
-sounddevice==0.4.8
-soundfile==0.12.1
-opencv-python==4.7.0.72
-requests==2.31.0
-sounddevice==0.4.8
-soundfile==0.12.1
-pywin32==305    # for win32crypt on Windows
-pycryptodome==3.17.0
+# Core dependencies
+psutil>=5.9.0
+requests>=2.28.0
+cryptography>=3.4.8
+pathlib2>=2.3.6
+
+# Network and security
+scapy>=2.4.5
+dnspython>=2.2.1
+shodan>=1.28.0
+python-nmap>=0.7.1
+paramiko>=2.11.0
+impacket>=0.10.0
+
+# Exploitation and C2
+pymetasploit3>=1.0.0
+flask>=2.2.0
+flask-socketio>=5.3.0
+websockets>=10.4
+
+# System monitoring and manipulation
+pywin32>=303; sys_platform == "win32"
+evdev>=1.6.1; sys_platform == "linux"
+pyobjc-framework-Quartz>=9.2; sys_platform == "darwin"
+pyobjc-framework-AppKit>=9.2; sys_platform == "darwin"
+pyWinhook>=1.6.1; sys_platform == "win32"
+
+# Image and audio processing
+Pillow>=9.3.0
+opencv-python>=4.6.0
+pyaudio>=0.2.11
+
+# AI and automation
+openai>=0.27.0
+transformers>=4.21.0
+torch>=1.12.0
+
+# Cloud API dependencies
+boto3>=1.26.0
+azure-identity>=1.12.0
+azure-mgmt-resource>=22.0.0
+azure-mgmt-storage>=19.0.0
+google-auth>=2.16.0
+google-cloud-storage>=2.8.0
+
+# Additional utilities
+colorama>=0.4.5
+tqdm>=4.64.0
+pyyaml>=6.0
+jinja2>=3.1.2
+markdown>=3.4.1
+
+# Development and testing
+pytest>=7.1.0
+pytest-timeout>=2.1.0
+flake8>=5.0.0
+black>=22.6.0
+
+# Optional: Hardware and firmware manipulation
+# flashrom>=1.2.0; sys_platform == "linux"

